@@ -121,7 +121,7 @@ def check_draft_with_llm(
     elif provider == "ollama":
         api_key = "ollama" # placeholder
         base_url = db.get_setting("ollama_endpoint", "http://localhost:11434/v1")
-        model_name = db.get_setting("ollama_model", "Gemma4:latest")
+        model_name = db.get_setting("ollama_model", "gemma4:latest")
         
     elif provider == "lm_studio":
         api_key = "lm_studio" # placeholder

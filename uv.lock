@@ -1044,6 +1044,7 @@ dependencies = [
     { name = "nostr-sdk" },
     { name = "openai" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "streamlit" },
 ]
 
@@ -1053,6 +1054,7 @@ requires-dist = [
     { name = "nostr-sdk", specifier = ">=0.44.2" },
     { name = "openai", specifier = ">=2.38.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "streamlit", specifier = ">=1.57.0" },
 ]
 

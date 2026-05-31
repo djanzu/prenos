@@ -175,6 +175,39 @@ def run_streamlit_app():
         border-top: 1px solid rgba(255, 255, 255, 0.05);
         padding-top: 1.5rem;
     }
+
+    .image-upload-section {
+        background: linear-gradient(135deg, rgba(79, 70, 229, 0.08) 0%, rgba(124, 58, 237, 0.12) 100%);
+        border: 1px solid rgba(124, 58, 237, 0.3);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin: 1rem 0 0.5rem 0;
+    }
+    .image-upload-section h4 {
+        margin: 0 0 0.75rem 0;
+        color: #a78bfa;
+        font-weight: 600;
+        font-size: 1rem;
+    }
+    .img-meta-row {
+        display: flex;
+        gap: 1.5rem;
+        font-size: 0.82rem;
+        color: #94a3b8;
+        margin-top: 0.4rem;
+    }
+    .img-meta-row span { white-space: nowrap; }
+    .upload-success-box {
+        background-color: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        margin-top: 0.75rem;
+        word-break: break-all;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+        color: #34d399;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -213,6 +246,10 @@ def run_streamlit_app():
         st.session_state.user_answer = ""
     if "relay_publish_results" not in st.session_state:
         st.session_state.relay_publish_results = None
+    if "uploaded_image_url" not in st.session_state:
+        st.session_state.uploaded_image_url = None
+    if "draft_text_update" not in st.session_state:
+        st.session_state.draft_text_update = None
 
     # Tabs
     tab_post, tab_agent, tab_history, tab_settings = st.tabs([
@@ -225,10 +262,16 @@ def run_streamlit_app():
     # ----------------- TAB 1: NEW POST -----------------
     with tab_post:
         st.subheader("下書きを作成")
+
+        # Check if we have a pending update to the draft text (prevents StreamlitAPIException)
+        if st.session_state.draft_text_update is not None:
+            st.session_state.draft_text = st.session_state.draft_text_update
+            st.session_state.draft_text_input = st.session_state.draft_text_update
+            st.session_state.draft_text_update = None
         
         # Check if they have an active LLM suggestion to apply
         def apply_suggestion(sug_text):
-            st.session_state.draft_text = sug_text
+            st.session_state.draft_text_update = sug_text  # 安全に次の描画で反映する
             st.session_state.check_status = "idle"
             st.session_state.llm_result = None
             st.session_state.conversation_history = []
@@ -245,7 +288,76 @@ def run_streamlit_app():
         
         # Keep internal draft_text updated
         st.session_state.draft_text = draft_input
-        
+
+        # --------------- IMAGE UPLOAD SECTION ---------------
+        st.markdown('<div class="image-upload-section"><h4>🖼️ 画像を添付する (image.nostr.build)</h4></div>', unsafe_allow_html=True)
+
+        if not nsec_valid:
+            st.warning("⚠️ 画像アップロードには Nostr 秘密キーの設定が必要です。「🛠️ システム設定」タブで設定してください。", icon="🔒")
+        else:
+            uploaded_file = st.file_uploader(
+                "画像ファイルを選択またはドロップ（PNG / JPG / WEBP / GIF、最大 20MB）:",
+                type=["png", "jpg", "jpeg", "webp", "gif"],
+                key="image_uploader",
+                label_visibility="collapsed"
+            )
+
+            if uploaded_file is not None:
+                file_bytes = uploaded_file.getvalue()
+                file_size_kb = len(file_bytes) / 1024
+                file_size_str = f"{file_size_kb:.1f} KB" if file_size_kb < 1024 else f"{file_size_kb / 1024:.2f} MB"
+
+                col_prev, col_meta = st.columns([1, 2])
+                with col_prev:
+                    st.image(file_bytes, caption="プレビュー", use_container_width=True)
+                with col_meta:
+                    st.markdown(f"""
+                    <div class="img-meta-row">
+                        <span>📄 <strong>{uploaded_file.name}</strong></span>
+                    </div>
+                    <div class="img-meta-row">
+                        <span>📦 サイズ: {file_size_str}</span>
+                        <span>🎨 形式: {uploaded_file.type}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if st.button("📤 画像サーバーにアップロード", type="primary", key="upload_image_btn"):
+                        with st.spinner("image.nostr.build にアップロード中..."):
+                            upload_result = nostr_client.upload_image_to_nostr_build(
+                                nsec=nsec_env,
+                                file_bytes=file_bytes,
+                                filename=uploaded_file.name,
+                                mime_type=uploaded_file.type
+                            )
+
+                        if upload_result["success"]:
+                            img_url = upload_result["url"]
+                            st.session_state.uploaded_image_url = img_url
+                            # Append image URL to draft text
+                            current_draft = st.session_state.draft_text.rstrip()
+                            new_draft = (current_draft + "\n" + img_url) if current_draft else img_url
+                            # st.session_state.draft_text_input はウィジェットインスタンス化後は書き換えられないため、
+                            # draft_text_update に保存して次の rerun の描画前に適用させる。
+                            st.session_state.draft_text_update = new_draft
+                            st.toast("✅ 画像のアップロードに成功しました！", icon="🎉")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ アップロード失敗: {upload_result['error_message']}")
+
+            # Show last uploaded URL (persists across reruns)
+            if st.session_state.uploaded_image_url:
+                st.markdown(f"""
+                <div class="upload-success-box">
+                    ✅ アップロード済み: {st.session_state.uploaded_image_url}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("🗑️ アップロード済み URL をクリア", key="clear_img_url_btn"):
+                    st.session_state.uploaded_image_url = None
+                    st.rerun()
+
+        st.write("")
+        # ----- end image upload section -----
+
         col_actions = st.columns([1, 1, 4])
         
         # Button: Trigger AI check
@@ -255,11 +367,12 @@ def run_streamlit_app():
         # Button: Reset Draft
         with col_actions[1]:
             if st.button("🧹 下書きをクリア", use_container_width=True):
-                st.session_state.draft_text = ""
+                st.session_state.draft_text_update = ""  # 安全に次の描画前でクリアする
                 st.session_state.check_status = "idle"
                 st.session_state.llm_result = None
                 st.session_state.conversation_history = []
                 st.session_state.relay_publish_results = None
+                st.session_state.uploaded_image_url = None
                 st.rerun()
 
         if btn_check:
